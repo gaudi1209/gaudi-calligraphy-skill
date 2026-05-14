@@ -8,13 +8,12 @@
 
 高迪书法字库系列程序采用开源方式发布，欢迎共同改进。
 
-<p align="center">
-  <img src="images/01-calligraphy-spread.png" width="45%" />
-  &nbsp;&nbsp;
-  <img src="images/02-calligraphy-detail.png" width="45%" />
-</p>
+<table align="center"><tr>
+  <td><img src="images/01-calligraphy-spread.png" height="400" /></td>
+  <td><img src="images/02-calligraphy-detail.png" height="400" /></td>
+</tr></table>
 
-<p align="center"><em>现代排版展示书法之美 — 黄帝内经 · 素问（高迪行书横版繁体）</em></p>
+<p align="center"><em>左：文心雕龙 &nbsp;&nbsp; 右：黄帝内经 · 灵枢</em></p>
 
 ---
 
@@ -55,9 +54,10 @@ TXT  → 人工校对 → 清洗
 | ，。！？；：、…·～ | 不变 | 上标 | 缩小淡化 |
 
 <p align="center">
-  <img src="images/03-punctuation-before.png" width="45%" />
-  &nbsp;&nbsp;
-  <img src="images/04-punctuation-after.png" width="45%" />
+  <img src="images/03-punctuation-before.png" width="100%" />
+</p>
+<p align="center">
+  <img src="images/04-punctuation-after.png" width="100%" />
 </p>
 
 <p align="center"><em>标点缩小淡化，保持书法文字的连续感</em></p>
@@ -67,7 +67,7 @@ TXT  → 人工校对 → 清洗
 目录对应章节，目录页码可通过右键「更新域」（Ctrl+A → F9）的方式更新对应章节。基于 Word TC + TOC 域机制，兼容 WPS 和 Microsoft Word。
 
 <p align="center">
-  <img src="images/05-smart-toc.png" width="60%" />
+  <img src="images/05-smart-toc.png" width="100%" />
 </p>
 
 <p align="center"><em>智能目录 — 点击条目直达指定章节，排版调整后 F9 一键更新页码</em></p>
@@ -86,11 +86,10 @@ TXT  → 人工校对 → 清洗
 
 常见一对多字符：里→里/裏、发→發/髮、干→幹/乾/干、面→面/麵、历→歷/曆、钟→鐘/鍾……
 
-<p align="center">
-  <img src="images/06-s2t-mixed.png" width="45%" />
-  &nbsp;&nbsp;
-  <img src="images/07-s2t-titles.png" width="45%" />
-</p>
+<table align="center"><tr>
+  <td><img src="images/06-s2t-mixed.png" height="400" /></td>
+  <td><img src="images/07-s2t-titles.png" height="400" /></td>
+</tr></table>
 
 <p align="center"><em>繁简混排处理、标题段首控制</em></p>
 
@@ -112,7 +111,7 @@ TXT  → 人工校对 → 清洗
 8. **智能目录** — 生成可更新的 TC + TOC 域目录
 
 <p align="center">
-  <img src="images/08-colophon.png" width="45%" />
+  <img src="images/08-colophon.png" width="100%" />
 </p>
 
 ---
