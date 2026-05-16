@@ -10,8 +10,8 @@ description: 古籍书法类 Word 文档完整排版工作流。涵盖从文本�
 ## 完整工作流总览
 
 ```
-文本提取 → 清洗切分 → 模板排版 → 段落优化 → 字库检查 → 繁简转换 → 竖排标点 → 智能目录
-   Step 1      Step 2      Step 3      Step 4      Step 5      Step 6       Step 7       Step 8
+文本提取 → PUA检测 → 清洗切分 → 模板排版 → 段落优化 → 字库检查 → 繁简转换 → 竖排标点 → 智能目录
+   Step 1     Step 2      Step 3      Step 4      Step 5      Step 6      Step 7       Step 8       Step 9
 ```
 
 ---
@@ -392,7 +392,139 @@ python <skill-dir>/scripts/pdf_proofread.py <PDF路径> <DOCX路径> [--skip N] 
 
 ---
 
-## Step 2 — 文本清洗与切分
+## Step 2 — PUA 字符检测与替换
+
+**PUA（Private Use Area, U+E000-U+F8FF）** 字符是某些 EPUB 制作工具不规范编码产生的"私用区"字符，在标准字体中无法显示（显示为豆腐块/方框）。**所有 PUA 字符均来源于 EPUB 源文件，PDF 不含 PUA。**
+
+### 检测方法
+
+对 docx 文件执行 PUA 扫描（必须用 lxml 直接解析 XML，python-docx 的 `paragraph.text` 不含页眉页脚文本框等内容）：
+
+```python
+from lxml import etree
+import zipfile
+
+def detect_pua_chars(docx_path):
+    """扫描 docx 中所有 XML 文件，检测 PUA 字符 (U+E000-U+F8FF)"""
+    pua_chars = {}  # {pua_codepoint: count}
+    pua_contexts = []  # [(codepoint, context_text)]
+
+    with zipfile.ZipFile(docx_path) as z:
+        for xml_name in z.namelist():
+            if not xml_name.endswith('.xml'):
+                continue
+            xml_bytes = z.read(xml_name)
+            try:
+                tree = etree.fromstring(xml_bytes)
+            except:
+                continue
+            # 提取所有文本节点
+            for elem in tree.iter():
+                if elem.text:
+                    for ch in elem.text:
+                        cp = ord(ch)
+                        if 0xE000 <= cp <= 0xF8FF:
+                            pua_chars[cp] = pua_chars.get(cp, 0) + 1
+                if elem.tail:
+                    for ch in elem.tail:
+                        cp = ord(ch)
+                        if 0xE000 <= cp <= 0xF8FF:
+                            pua_chars[cp] = pua_chars.get(cp, 0) + 1
+
+    return pua_chars
+```
+
+### 映射方法：语句匹配
+
+PUA 字符的上下文通常是完整的古文语句，可以用来匹配 PDF 繁体原文确认对应的标准 Unicode 字符。
+
+**映射流程：**
+
+1. 从 docx XML 中提取每个 PUA 字符的上下文语句（前后各 10-20 字）
+2. 将上下文语句转为繁体（opencc s2t），在 PDF 原文中搜索匹配
+3. PDF 对应位置的字符即为 PUA 字符应映射的标准 Unicode
+4. 高可信映射（PDF 直接确认）：直接替换
+5. 低可信映射（推断）：列出让用户确认
+
+```python
+import opencc
+
+def map_pua_via_context(docx_path, pdf_path):
+    """通过语句上下文匹配 PDF 确认 PUA 映射"""
+    converter = opencc.OpenCC('t2s')  # 繁→简，用于匹配
+
+    # 1. 从 docx 提取 PUA 字符及上下文
+    pua_contexts = extract_pua_contexts(docx_path)  # [(pua_cp, before_text, after_text)]
+
+    # 2. 从 PDF 提取文本（需处理 CJK 兼容偏旁问题）
+    pdf_text = extract_pdf_text(pdf_path)
+
+    # 3. 逐个匹配
+    mappings = {}
+    for pua_cp, before, after in pua_contexts:
+        # 构建搜索模式：前文 + ? + 后文（至少各 5 字）
+        search_before = before[-10:] if len(before) >= 10 else before
+        search_after = after[:10] if len(after) >= 10 else after
+        # 在 PDF 文本中搜索，? 处的字符即为映射目标
+        match = find_in_pdf(pdf_text, search_before, search_after)
+        if match:
+            mappings[pua_cp] = ord(match)
+    return mappings
+```
+
+### 替换方法
+
+确认映射后，直接在 docx 的 XML 中替换 PUA 字符：
+
+```python
+def replace_pua_in_docx(docx_path, pua_to_unicode, output_path):
+    """在 docx XML 中替换 PUA 字符为标准 Unicode"""
+    import shutil, zipfile
+
+    pua_map = {chr(k): chr(v) for k, v in pua_to_unicode.items()}
+    shutil.copy2(docx_path, output_path)
+
+    with zipfile.ZipFile(docx_path, 'r') as zin:
+        with zipfile.ZipFile(output_path, 'w') as zout:
+            for item in zin.infolist():
+                data = zin.read(item.filename)
+                if item.filename.endswith('.xml'):
+                    text = data.decode('utf-8')
+                    for pua_char, std_char in pua_map.items():
+                        text = text.replace(pua_char, std_char)
+                    data = text.encode('utf-8')
+                zout.writestr(item, data)
+```
+
+### 实际案例（史记 EPUB）
+
+史记 EPUB 来源的 docx 中发现 39 个 PUA 字符，共 131 处使用。映射表示例：
+
+| PUA | 标准 Unicode | 字 | 上下文 |
+|-----|-------------|---|--------|
+| U+E837 | U+7D2C | 紬 | 朕唯未能循明也，紬績日分 |
+| U+E844 | U+8A22 | 訢 | 訢載武王 |
+| U+E0F4 | U+84FA | 蓺 | 蓺五種 |
+| U+E41D | U+8CB2 | 貲 | 攻朝貲塞 |
+| U+E75C | U+882D | 蠭 | 豪傑蠭起 |
+
+**关键注意事项：**
+- PUA 扫描必须覆盖所有 XML 文件（document.xml、header/footer、textboxes 等）
+- python-docx 的 `paragraph.text` 只读取正文段落，会遗漏页眉页脚中的 PUA
+- 映射时优先用繁体 PDF 确认，繁体版是权威标准
+- EPUB 源文件本身含有 PUA，不能作为映射参考
+- PDF 文本提取会使用 CJK 兼容偏旁（如 ⽇ U+2F47 代替 日 U+65E5），匹配时需注意
+
+### 工作流位置
+
+**PUA 检测必须在文本提取（Step 1）之后、清洗切分（Step 3）之前执行。** 原因：
+- 文本提取后才能扫描完整内容
+- 清洗切分前替换 PUA，避免 PUA 字符干扰后续的段落切分和字库检查
+- 如果用 PDF 作为文本源则不需要此步骤（PDF 不含 PUA）
+
+---
+
+## Step 3 — 文本清洗与切分
 
 ```python
 CHAPTER = re.compile(r'(?=.*篇)(?=.*第).{4,29}$')
@@ -409,7 +541,7 @@ TRANSLATION = re.compile(r'參考譯文|参考译文')
 
 ---
 
-## Step 3 — 模板法排版
+## Step 4 — 模板法排版
 
 **核心原则：复制已有成品 docx 作为模板，只替换正文内容。**
 
@@ -467,7 +599,7 @@ Word 的 `w:spacing` 元素：
 
 ---
 
-## Step 4 — 段落优化
+## Step 5 — 段落优化
 
 PDF 提取的文本通常段落过于碎片化。需要两轮合并。
 
@@ -499,7 +631,7 @@ ANSWER = re.compile(r'^(岐伯曰|岐伯對曰|雷公曰)')
 
 ---
 
-## Step 5 — 字库字符检查
+## Step 6 — 字库字符检查
 
 检查文档用字是否在目标字体（.ttf/.otf）中存在。
 
@@ -520,7 +652,7 @@ python <skill-dir>/scripts/check_missing_chars.py <DOCX路径> <字体文件路�
 
 ---
 
-## Step 6 — 繁简转换
+## Step 7 — 繁简转换
 
 ```bash
 python <skill-dir>/scripts/s2twp.py <输入文件> [--mode auto]
@@ -533,7 +665,7 @@ python <skill-dir>/scripts/s2twp.py <输入文件> [--mode auto]
 
 ---
 
-## Step 7 — 竖排标点
+## Step 8 — 竖排标点
 
 ```bash
 python <skill-dir>/scripts/fix_punctuation.py <输入文件>
@@ -555,7 +687,7 @@ python <skill-dir>/scripts/fix_punctuation.py <输入文件>
 
 ---
 
-## Step 8 — 智能目录
+## Step 9 — 智能目录
 
 ### 前提条件
 
@@ -650,6 +782,8 @@ CONTAMINATION = re.compile(r'【(提要|题解|注释)】')
 | 译文前空行消失 | 段落合并吞掉空段 | 合并后手动插入空段落 |
 | 译文以正文格式排版 | is_likely_modern() 漏判 | 检查 852/exact 段落内容 |
 | EPUB 多章合并 | 两篇合一个 HTML | 检查内部分标题 |
+| **PUA 字符（豆腐块）** | EPUB 源文件使用私用区编码 U+E000-U+F8FF | Step 2 检测并通过语句匹配 PDF 映射为标准 Unicode |
+| PUA 映射无法确认 | PDF 文本提取含兼容偏旁（如 ⽇≠日） | 放宽匹配条件，或人工确认 |
 | 竖排标点误转目录占位 | 括号被转为︵︶ | 标点处理前标记目录段落 |
 | 弯引号未被替换 | QUOTE_MAP 写了 ASCII 直引号 | 用 `\u201c`/`\u201d` 转义 |
 | 首印章丢失 | 模板中孤立图片（media 存在但未引用） | python-docx 操作前提取图片，用 COM 插入 |
