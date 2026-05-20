@@ -3,9 +3,11 @@
 用法: python fix_punctuation.py <输入文件> [输出文件]
 
 处理逻辑：
-  1. 字形替换：引号→角括号，书名号→浪线，括号→直式
-  2. 格式统一：深红(#8B0000)、楷体、小四(12pt)
-  3. 位置调整：上标/下标/不调整
+  1. 书名号《》：删除标记，对书名文字添加波浪下划线（跨 run 处理）
+  2. 字形替换：引号→角括号，括号→直式
+  3. 格式统一：深红(#8B0000)、楷体、小四(12pt)
+  4. 位置调整：上标/下标/不调整
+  5. 黑括号【】︻︼：深红、楷体，但保持原字号、不调上下标
 """
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
@@ -24,17 +26,20 @@ CHAR_REPLACE = {
     '\u2018': '\u300c',  # ' → 「
     '\u2019': '\u300d',  # ' → 」
     '\uff02': '\u300e',  # ＂ → 『（全角双引号）
-    # 书名号 → 浪线
-    '\u300a': '\ufe4f',  # 《 → ﹏
-    '\u300b': '\ufe4f',  # 》 → ﹏
-    '\u3008': '\ufe4f',  # 〈 → ﹏
-    '\u3009': '\ufe4f',  # 〉 → ﹏
     # 括号 → 直式
     '\uff08': '\ufe35',  # （ → ︵
     '\uff09': '\ufe36',  # ） → ︶
     '(': '\ufe35',       # ( → ︵
     ')': '\ufe36',       # ) → ︶
 }
+
+# ── 书名号标记 ──
+BOOK_OPEN = set('\u300a\u3008')   # 《 〈
+BOOK_CLOSE = set('\u300b\u3009')  # 》 〉
+BOOK_MARKERS = BOOK_OPEN | BOOK_CLOSE
+
+# ── 黑括号（保持原字号，不调上下标）──
+LENTICULAR_BRACKETS = set('\u3010\u3011\uFE3B\uFE3C')  # 【 】 ︻ ︼
 
 # ── 位置规则 ──
 # 不调整位置（只改格式，不改上下标）
@@ -52,8 +57,9 @@ def is_special_symbol(char):
 
 
 def is_punctuation(char):
-    # 替换后的字符（︵︶等）也需要设置格式，不跳过
-    # NO_SCRIPT 仅用于跳过位置调整，不影响格式设置
+    # 黑括号也是标点（需要改颜色和字体）
+    if char in LENTICULAR_BRACKETS:
+        return True
     if is_special_symbol(char):
         return True
     cp = ord(char)
@@ -62,7 +68,8 @@ def is_punctuation(char):
     if 0xFE30 <= cp <= 0xFE4F:  # CJK兼容形式（︵︶﹏等）
         return True
     if 0xFF00 <= cp <= 0xFFEF:
-        return char in '\uff0c\u3002\uff01\uff1f\uff1b\uff1a\u201c\u201d\u2018\u2019\uff08\uff09\u300a\u300b\u3008\u3009\u3010\u3011\u3001\u2026\u2014\u00b7'
+        if char in '\uff0c\u3002\uff01\uff1f\uff1b\uff1a\u201c\u201d\u2018\u2019\uff08\uff09\u300a\u300b\u3008\u3009\u3010\u3011\u3001\u2026\u2014\u00b7':
+            return True
     if cp == 0x00B7:
         return True
     if char in '\uff0c\u3002\uff01\uff1f\uff1b\uff1a\u201c\u201d\u2018\u2019\uff08\uff09\u300a\u300b\u3008\u3009\u3010\u3011\u3001\u2026\u2014\u00b7\uff5e\u3001,.!?;:\'"()[]{}<>@#$%^&*+=|/\\~`_\u2026':
@@ -74,13 +81,26 @@ def is_punctuation(char):
 
 
 def set_run_font(run, char):
-    """设置格式：深红、楷体、小四，根据字符类型调整位置"""
+    """设置格式：深红、楷体，根据字符类型调整位置和大小"""
+    first_char = char[0] if char else ''
+
+    # 黑括号：只改颜色和字体，保持原字号和位置
+    if len(char) == 1 and first_char in LENTICULAR_BRACKETS:
+        run.font.color.rgb = RGBColor(0x8B, 0x00, 0x00)
+        run.font.name = '楷体'
+        rPr = run._element.get_or_add_rPr()
+        rFonts = rPr.find(qn('w:rFonts'))
+        if rFonts is None:
+            rFonts = etree.SubElement(rPr, qn('w:rFonts'))
+        rFonts.set(qn('w:eastAsia'), '楷体')
+        return
+
+    # 常规标点格式
     run.font.color.rgb = RGBColor(0x8B, 0x00, 0x00)
     run.font.size = Pt(12)
     run.font.name = '楷体'
 
     # 特殊符号和浪线不调位置
-    first_char = char[0] if char else ''
     if len(char) == 1 and is_special_symbol(char):
         pass
     elif any(c in NO_SCRIPT for c in char):
@@ -98,12 +118,108 @@ def set_run_font(run, char):
     rFonts.set(qn('w:eastAsia'), '楷体')
 
 
+def add_wavy_underline_to_run(run):
+    """对 Run 对象添加深红波浪下划线"""
+    rPr = run._element.get_or_add_rPr()
+    u = rPr.find(qn('w:u'))
+    if u is None:
+        u = etree.SubElement(rPr, qn('w:u'))
+    u.set(qn('w:val'), 'wave')
+    u.set(qn('w:color'), '8B0000')
+
+
+def add_wavy_underline_to_element(elem):
+    """对 XML run 元素添加深红波浪下划线"""
+    rPr = elem.find(qn('w:rPr'))
+    if rPr is None:
+        rPr = etree.SubElement(elem, qn('w:rPr'))
+        elem.insert(0, rPr)
+    u = rPr.find(qn('w:u'))
+    if u is None:
+        u = etree.SubElement(rPr, qn('w:u'))
+    u.set(qn('w:val'), 'wave')
+    u.set(qn('w:color'), '8B0000')
+
+
+def handle_book_name_markers(para):
+    """处理书名号《》：删除标记字符，对书名文字添加波浪下划线。
+
+    必须在 process_run 之前调用。
+    跨 run 处理：支持《》分布在不同 run 中的情况。
+    """
+    runs = list(para.runs)
+    if not runs:
+        return 0
+
+    # Phase 1: 遍历所有 run，处理包含《》的 run
+    # 拆分含标记的 run，删除标记字符，记录哪些 run 在书名内
+    in_book = False
+    modified_count = 0
+
+    for run in runs:
+        text = run.text
+        if not text:
+            continue
+
+        has_marker = any(c in text for c in BOOK_MARKERS)
+
+        if not has_marker:
+            if in_book:
+                add_wavy_underline_to_run(run)
+            continue
+
+        # 含标记的 run → 按《》拆分
+        segments = []  # [(text, is_inside_book)]
+        current = ''
+
+        for ch in text:
+            if ch in BOOK_OPEN:
+                if current:
+                    segments.append((current, in_book))
+                    current = ''
+                in_book = True
+            elif ch in BOOK_CLOSE:
+                if current:
+                    segments.append((current, True))  # 《》内的文字
+                    current = ''
+                in_book = False
+            else:
+                current += ch
+
+        if current:
+            segments.append((current, in_book))
+
+        modified_count += 1
+
+        if not segments:
+            # 整个 run 只有标记，删除
+            run._element.getparent().remove(run._element)
+            continue
+
+        # 用拆分后的段替换原 run
+        parent = run._element.getparent()
+        run_index = list(parent).index(run._element)
+        parent.remove(run._element)
+
+        for j, (seg_text, seg_in_book) in enumerate(segments):
+            new_elem = copy.deepcopy(run._element)
+            t = new_elem.find(qn('w:t'))
+            if t is not None:
+                t.text = seg_text
+                t.set('{http://www.w3.org/XML/1998/namespace}space', 'preserve')
+            if seg_in_book:
+                add_wavy_underline_to_element(new_elem)
+            parent.insert(run_index + j, new_elem)
+
+    return modified_count
+
+
 def process_run(run):
     text = run.text
     if not text:
         return
 
-    # 先做字形替换
+    # 先做字形替换（不含书名号，书名号由 handle_book_name_markers 处理）
     replaced = ''.join(CHAR_REPLACE.get(c, c) for c in text)
 
     if len(replaced) == 1:
@@ -186,9 +302,14 @@ def main():
 
     punct_count = 0
     replace_count = 0
+    book_marker_count = 0
     total_runs = 0
 
     for para in doc.paragraphs:
+        # 先处理书名号（跨 run）
+        book_marker_count += handle_book_name_markers(para)
+
+        # 再处理其他标点（逐 run）
         runs = list(para.runs)
         for run in runs:
             total_runs += 1
@@ -203,7 +324,7 @@ def main():
                 punct_count += sum(1 for c in replaced if is_punctuation(c))
             process_run(run)
 
-    print(f'处理完成: {total_runs} 个 run，字形替换 {replace_count} 个，格式修改 {punct_count} 个标点')
+    print(f'处理完成: {total_runs} 个 run，书名号处理 {book_marker_count} 处，字形替换 {replace_count} 个，格式修改 {punct_count} 个标点')
     doc.save(output_path)
     print(f'保存文件: {output_path}')
 
